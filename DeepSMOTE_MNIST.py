@@ -1,4 +1,3 @@
-
 import collections
 import torch
 import torch.nn as nn
@@ -7,6 +6,7 @@ import numpy as np
 from sklearn.neighbors import NearestNeighbors
 import time
 import os
+import pandas as pd
 
 print(torch.version.cuda) #10.1
 t3 = time.time()
@@ -22,7 +22,7 @@ args['n_z'] = 300 #600     # number of dimensions in latent space.
 args['sigma'] = 1.0        # variance in n_z
 args['lambda'] = 0.01      # hyper param for weight of discriminator loss
 args['lr'] = 0.0002        # learning rate for Adam optimizer .000
-args['epochs'] = 200       # how many epochs to run for
+args['epochs'] = 2       # how many epochs to run for
 args['batch_size'] = 100   # batch size for SGD
 args['save'] = True        # save weights at each epoch of training if True
 args['train'] = True       # train networks if True, else load networks from
@@ -39,52 +39,17 @@ class Encoder(nn.Module):
     def __init__(self, args):
         super(Encoder, self).__init__()
 
-        self.n_channel = args['n_channel']
-        self.dim_h = args['dim_h']
-        self.n_z = args['n_z']
-        
-        # convolutional filters, work excellent with image data
         self.conv = nn.Sequential(
-            nn.Conv2d(self.n_channel, self.dim_h, 4, 2, 1, bias=False),
-            #nn.ReLU(True),
+            nn.Conv1d(8, 4, 4),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(self.dim_h, self.dim_h * 2, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(self.dim_h * 2),
-            #nn.ReLU(True),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(self.dim_h * 2, self.dim_h * 4, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(self.dim_h * 4),
-            #nn.ReLU(True),
-            nn.LeakyReLU(0.2, inplace=True),
-            
-            
-            nn.Conv2d(self.dim_h * 4, self.dim_h * 8, 4, 2, 1, bias=False),
-            
-            #3d and 32 by 32
-            #nn.Conv2d(self.dim_h * 4, self.dim_h * 8, 4, 1, 0, bias=False),
-            
-            nn.BatchNorm2d(self.dim_h * 8), # 40 X 8 = 320
-            #nn.ReLU(True),
-            nn.LeakyReLU(0.2, inplace=True) )#,
-            #nn.Conv2d(self.dim_h * 8, 1, 2, 1, 0, bias=False))
-            #nn.Conv2d(self.dim_h * 8, 1, 4, 1, 0, bias=False))
-        # final layer is fully connected
-        self.fc = nn.Linear(self.dim_h * (2 ** 3), self.n_z)
-        
+        )#,
+        self.fc = nn.Linear(4, 1)
 
     def forward(self, x):
-        #print('enc')
-        #print('input ',x.size()) #torch.Size([100, 3,32,32])
         x = self.conv(x)
-        
         x = x.squeeze()
-        #print('aft squeeze ',x.size()) #torch.Size([128, 320])
-        #aft squeeze  torch.Size([100, 320])
         x = self.fc(x)
-        #print('out ',x.size()) #torch.Size([128, 20])
-        #out  torch.Size([100, 300])
         return x
-
 
 class Decoder(nn.Module):
     def __init__(self, args):
@@ -94,84 +59,25 @@ class Decoder(nn.Module):
         self.dim_h = args['dim_h']
         self.n_z = args['n_z']
 
-        # first layer is fully connected
         self.fc = nn.Sequential(
-            nn.Linear(self.n_z, self.dim_h * 8 * 7 * 7),
-            nn.ReLU())
+            nn.Linear(1, 4),
+            nn.LeakyReLU(0.2, inplace=True))
 
-        # deconvolutional filters, essentially inverse of convolutional filters
         self.deconv = nn.Sequential(
-            nn.ConvTranspose2d(self.dim_h * 8, self.dim_h * 4, 4),
-            nn.BatchNorm2d(self.dim_h * 4),
+            nn.Conv1d(10, 80, 1),
             nn.ReLU(True),
-            nn.ConvTranspose2d(self.dim_h * 4, self.dim_h * 2, 4),
-            nn.BatchNorm2d(self.dim_h * 2),
-            nn.ReLU(True),
-            nn.ConvTranspose2d(self.dim_h * 2, 1, 4, stride=2),
             #nn.Sigmoid())
-            nn.Tanh())
+            )
+            # nn.Tanh())
 
     def forward(self, x):
-        #print('dec')
-        #print('input ',x.size())
         x = self.fc(x)
-        x = x.view(-1, self.dim_h * 8, 7, 7)
+
+        x = x.reshape(1, 10, 4)
+
+        import pdb; pdb.set_trace()
         x = self.deconv(x)
         return x
-
-##############################################################################
-"""set models, loss functions"""
-# control which parameters are frozen / free for optimization
-def free_params(module: nn.Module):
-    for p in module.parameters():
-        p.requires_grad = True
-
-def frozen_params(module: nn.Module):
-    for p in module.parameters():
-        p.requires_grad = False
-
-
-##############################################################################
-"""functions to create SMOTE images"""
-
-def biased_get_class(c):
-    
-    xbeg = dec_x[dec_y == c]
-    ybeg = dec_y[dec_y == c]
-    
-    return xbeg, ybeg
-    #return xclass, yclass
-
-
-def G_SM(X, y,n_to_sample,cl):
-
-    # determining the number of samples to generate
-    #n_to_sample = 10 
-
-    # fitting the model
-    n_neigh = 5 + 1
-    nn = NearestNeighbors(n_neighbors=n_neigh, n_jobs=1)
-    nn.fit(X)
-    dist, ind = nn.kneighbors(X)
-
-    # generating samples
-    base_indices = np.random.choice(list(range(len(X))),n_to_sample)
-    neighbor_indices = np.random.choice(list(range(1, n_neigh)),n_to_sample)
-
-    X_base = X[base_indices]
-    X_neighbor = X[ind[base_indices, neighbor_indices]]
-
-    samples = X_base + np.multiply(np.random.rand(n_to_sample,1),
-            X_neighbor - X_base)
-
-    #use 10 as label because 0 to 9 real classes and 1 fake/smoted = 10
-    return samples, [cl]*n_to_sample
-
-#xsamp, ysamp = SM(xclass,yclass)
-
-###############################################################################
-
-
 #NOTE: Download the training ('.../0_trn_img.txt') and label files 
 # ('.../0_trn_lab.txt').  Place the files in directories (e.g., ../MNIST/trn_img/
 # and /MNIST/trn_lab/).  Originally, when the code was written, it was for 5 fold
@@ -179,16 +85,20 @@ def G_SM(X, y,n_to_sample,cl):
 #directories.  Here, for illustration, we use only 1 training and 1 label
 #file (e.g., '.../0_trn_img.txt' and '.../0_trn_lab.txt').
 
-dtrnimg = '.../MNIST/trn_img/'
-dtrnlab = '.../MNIST/trn_lab/'
+# dtrnimg = './MNIST/trn_img/'
+# dtrnlab = './MNIST/trn_lab/'
 
-ids = os.listdir(dtrnimg)
-idtri_f = [os.path.join(dtrnimg, image_id) for image_id in ids]
-print(idtri_f)
+# ids = os.listdir(dtrnimg)
+# idtri_f = [os.path.join(dtrnimg, image_id) for image_id in ids]
+# print(idtri_f)
 
-ids = os.listdir(dtrnlab)
-idtrl_f = [os.path.join(dtrnlab, image_id) for image_id in ids]
-print(idtrl_f)
+# ids = os.listdir(dtrnlab)
+# idtrl_f = [os.path.join(dtrnlab, image_id) for image_id in ids]
+# print(idtrl_f)
+
+dtrn_iris = './MNIST/trn_iris/'
+ids = os.listdir(dtrn_iris)
+idtr_iris_f = 'iris.csv'
 
 #for i in range(5):
 for i in range(len(ids)):
@@ -207,33 +117,25 @@ for i in range(len(ids)):
     #decoder loss function
     criterion = nn.MSELoss()
     criterion = criterion.to(device)
-    
-    trnimgfile = idtri_f[i]
-    trnlabfile = idtrl_f[i]
-    
-    print(trnimgfile)
-    print(trnlabfile)
-    dec_x = np.loadtxt(trnimgfile) 
-    dec_y = np.loadtxt(trnlabfile)
 
-    print('train imgs before reshape ',dec_x.shape) 
-    print('train labels ',dec_y.shape) 
-    print(collections.Counter(dec_y))
-    dec_x = dec_x.reshape(dec_x.shape[0],1,28,28)   
-    print('train imgs after reshape ',dec_x.shape) 
+    df = pd.read_csv('./MNIST/trn_iris/iris-unb.csv')
+    df = df.drop('Unnamed: 0', axis=1)
+    dec_x = df.drop('variety', axis=1)
+    # dex_x = torch.from_numpy(dec_x)
+    dec_y = df['variety']
 
     batch_size = 100
     num_workers = 0
 
     #torch.Tensor returns float so if want long then use torch.tensor
-    tensor_x = torch.Tensor(dec_x)
-    tensor_y = torch.tensor(dec_y,dtype=torch.long)
-    mnist_bal = TensorDataset(tensor_x,tensor_y) 
+    dec_x_r = np.reshape
+    tensor_x = torch.Tensor(np.array(dec_x)).reshape(10, -1, 4)
+
+    tensor_y = torch.Tensor(np.array(dec_y)).reshape(10, -1, 1)
+
+    mnist_bal = TensorDataset(tensor_x,tensor_y)
     train_loader = torch.utils.data.DataLoader(mnist_bal, 
         batch_size=batch_size,shuffle=True,num_workers=num_workers)
-    
-    classes = ('0', '1', '2', '3', '4',
-           '5', '6', '7', '8', '9')
 
     best_loss = np.inf
 
@@ -255,27 +157,22 @@ for i in range(len(ids)):
                 # zero gradients for each batch
                 encoder.zero_grad()
                 decoder.zero_grad()
-                #print(images)
                 images, labs = images.to(device), labs.to(device)
                 #print('images ',images.size()) 
                 labsn = labs.detach().cpu().numpy()
                 #print('labsn ',labsn.shape, labsn)
-            
                 # run images
                 z_hat = encoder(images)
-            
                 x_hat = decoder(z_hat) #decoder outputs tanh
                 #print('xhat ', x_hat.size())
                 #print(x_hat)
                 mse = criterion(x_hat,images)
                 #print('mse ',mse)
-                
-                       
                 resx = []
                 resy = []
             
                 tc = np.random.choice(10,1)
-                #tc = 9
+                tc = 2
                 xbeg = dec_x[dec_y == tc]
                 ybeg = dec_y[dec_y == tc] 
                 xlen = len(xbeg)
@@ -343,9 +240,9 @@ for i in range(len(ids)):
             #necessary for illustration purposes
             if train_loss < best_loss:
                 print('Saving..')
-                path_enc = '.../MNIST/models/crs5/' \
+                path_enc = './MNIST/models/crs5/' \
                     + str(i) + '/bst_enc.pth'
-                path_dec = '.../MNIST/models/crs5/' \
+                path_dec = './MNIST/models/crs5/' \
                     + str(i) + '/bst_dec.pth'
              
                 torch.save(encoder.state_dict(), path_enc)
